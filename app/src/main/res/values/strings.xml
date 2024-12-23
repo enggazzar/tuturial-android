@@ -1,4 +1,3 @@
 <resources>
-    <string name="app_name">exampleCompose</string>
-    <string name="cc">\"Show Less \"</string>
+  <string name="app_name">TutorialAndroid</string>
 </resources>
