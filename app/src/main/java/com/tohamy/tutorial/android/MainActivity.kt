@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /*
@@ -84,8 +85,10 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     //region loge will print after tow suspend function finish because executed in same coroutine
+   //  launch {  } if call every function inside launch tow function will be executed at same time
     //https://www.youtube.com/watch?v=yc_WfBp-PdE&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=3
     GlobalScope.launch {
+
       val network1 = networkCall1()
       val network2 = networkCall2()
       Log.e("Tag",network1)
@@ -114,6 +117,18 @@ class MainActivity : ComponentActivity() {
        }
      }
 
+    //endregion
+    //region runBlocking
+    /*
+    https://www.youtube.com/watch?v=k9yisEEPC8g&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=5
+    1- will block main thread if have ex delay useful for test
+    2- like sleep but can call suspend function inside
+     */
+
+    runBlocking {
+      delay(100)
+    }
+    Log.e("tag","will executed after 100")
     //endregion
 
     setContent {
