@@ -246,6 +246,9 @@ class MainActivity : ComponentActivity() {
        5-viewModelScope if there are exception all sub coroutine will cancelled even we handle exception
        6- if cancel job there are exception handle will eat cancel and if there are print after try catch
        will executed to stop this throw new exception
+       7-CancellationException will not make app crash
+       8- if child coroutine have exception will send to parent
+       9-  async  will not throw exception till we call wait
 
        */
       val handler= CoroutineExceptionHandler { coroutineContext, throwable ->
