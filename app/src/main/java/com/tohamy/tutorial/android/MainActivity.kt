@@ -12,13 +12,25 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.lifecycleScope
+import com.tohamy.tutorial.android.ui.MyApp
 import com.tohamy.tutorial.android.ui.theme.TutorialAndroidTheme
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.measureTime
 
 /*
 references
@@ -85,14 +97,14 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     //region loge will print after tow suspend function finish because executed in same coroutine
-   //  launch {  } if call every function inside launch tow function will be executed at same time
+    //  launch {  } if call every function inside launch tow function will be executed at same time
     //https://www.youtube.com/watch?v=yc_WfBp-PdE&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=3
     GlobalScope.launch {
 
       val network1 = networkCall1()
       val network2 = networkCall2()
-      Log.e("Tag",network1)
-      Log.e("Tag",network2)
+      Log.e("Tag", network1)
+      Log.e("Tag", network2)
     }
     //endregion
     //region Coroutine Contexts (Dispatcher)
@@ -110,12 +122,12 @@ class MainActivity : ComponentActivity() {
        }
        ===========
      */
-     GlobalScope.launch(Dispatchers.IO) {
-       val network1 = networkCall1()
-       withContext(Dispatchers.Main){
-         //here can update ui
-       }
-     }
+    GlobalScope.launch(Dispatchers.IO) {
+      val network1 = networkCall1()
+      withContext(Dispatchers.Main) {
+        //here can update ui
+      }
+    }
 
     //endregion
     //region runBlocking
@@ -128,34 +140,185 @@ class MainActivity : ComponentActivity() {
     runBlocking {
       delay(100)
     }
-    Log.e("tag","will executed after 100")
+    Log.e("tag", "will executed after 100")
     //endregion
+    //region join wait canceling
+    /*
+    https://www.youtube.com/watch?v=55W60o9uzVc&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=7
+    1- join will block main thread till current coroutine is finished
+     */
+    val job = GlobalScope.launch {
+      repeat(3) {
+        Log.e("Tage", "is working")
+      }
+    }
+    runBlocking {
+      job.join()
+      Log.e("Tage", "is finished")
+    }
 
-    setContent {
-      TutorialAndroidTheme {
-        Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-          Greeting(
-            name = "Android",
-            modifier = Modifier.padding(innerPadding)
-          )
+    /*
+    2- cancel will cancel coroutine but need to use is active because sometimes coroutine will busy with
+    calculation
+     */
+
+    val job1 = GlobalScope.launch {
+      if (isActive) {
+        repeat(3) {
+          Log.e("Tage", "is working")
+        }
+      }
+
+      /*
+      3-withTimeout out will cancel coroutine automatic if working more than the time
+       */
+      GlobalScope.launch {
+        withTimeout(1000) {
+          if (isActive) {
+            repeat(3) {
+              Log.e("Tage", "is working")
+            }
+          }
+        }
+      }
+
+      //endregion
+      //region Async and Await - Kotlin Coroutines
+      /*
+      1-launch will return job where can use join to wait coroutine but async will return deferred
+      2- async will use with if there are  result( Deferred) but launch not
+      3- measureTime to calculate time till coroutine is finish
+       */
+      GlobalScope.launch {
+        var network1: String? = null
+        var network2: String? = null
+        network1 = networkCall1()
+        network2 = networkCall2()
+        //will print null
+        Log.e("Tag", network1)
+        Log.e("Tag", network2)
+      }
+      GlobalScope.launch {
+        val time = measureTime {
+          var network1: String? = null
+          var network2: String? = null
+          val job1 = launch { network1 = networkCall1() }
+          val job2 = launch { network1 = networkCall2() }
+          //will print null
+          job1.join()
+          job2.join()
+          //will wait until job1 and job 2 is finished thin print job1 and job 2 will executed in same time
+          Log.e("Tag", network1.toString())
+          Log.e("Tag", network2.toString())
+        }
+        Log.e("Tag", "time is $time")
+      }
+      //async is better way more than above
+      GlobalScope.launch {
+        val time = measureTime {
+          val network1 = async { networkCall1() }
+          val network2 = async { networkCall2() }
+
+          //will wait until network1 and network2 2 is finished thin print job1 and job 2 will executed in same time
+          Log.e("Tag", network1.await())
+          Log.e("Tag", network2.await())
+        }
+        Log.e("Tag", "time is $time")
+      }
+
+      //endregion
+      //region lifecycle
+      /*
+     https://www.youtube.com/watch?v=uiPYcSSjNTI&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=8
+     will cancel when open new activity if you make calculation you need to check if is active
+      */
+      lifecycleScope.launch {
+
+      }
+      //endregion
+      //region Coroutine Cancellation & Exception Handling
+      /*
+       https://www.youtube.com/watch?v=VWlwkqmTLHc&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=11
+       1- try catch not recommended with coroutine but use CoroutineExceptionHandler
+       2- Coroutine scope if there are exception all sub coroutine will cancelled even we handle exception
+       3-supervisorScope if there are exception all sub coroutine will not cancelled
+       4- can use +  lifecycleScope.launch (handler+Dispatchers.Main)
+       5-viewModelScope if there are exception all sub coroutine will cancelled even we handle exception
+       6- if cancel job there are exception handle will eat cancel and if there are print after try catch
+       will executed to stop this throw new exception
+
+       */
+      val handler= CoroutineExceptionHandler { coroutineContext, throwable ->
+         println("Exception is ${throwable.message}")
+      }
+      lifecycleScope.launch (handler+Dispatchers.Main){
+        launch {
+          //app will not crash
+          throw Exception("Errore")
+        }
+        launch {
+          //will not printed all sub coroutine wil be cancelled
+         println("coroutine 2")
+        }
+
+      }
+      supervisorScope {
+        launch {
+          //app will not crash
+          throw Exception("Errore")
+        }
+        launch {
+          //will  printed
+          println("coroutine 2")
+        }
+
+      }
+      //cancel job
+      lifecycleScope.launch {
+        val job = launch {
+          try {
+            delay(timeMillis = 500L)
+          } catch (e: Exception) {
+            //to stop println  because e: Exception eat CancellationException
+            if (e is CancellationException) {
+              throw e
+            }
+            e.printStackTrace()
+          }
+          //will not print
+          println("Coroutine 1 finished")
+        }
+        delay(timeMillis = 300L)
+        job.cancel()
+      }
+
+
+      //endregion
+
+
+      setContent {
+        TutorialAndroidTheme {
+          //Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+          MyApp()
+          // }
         }
       }
     }
   }
-}
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-  Text(
-    text = "Hello $name!",
-    modifier = modifier
-  )
-}
+  @Composable
+  fun Greeting(name: String, modifier: Modifier = Modifier) {
+    Text(
+      text = "Hello $name!",
+      modifier = modifier
+    )
+  }
 
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-  TutorialAndroidTheme {
-    Greeting("Android")
+  @Preview(showBackground = true)
+  @Composable
+  fun GreetingPreview() {
+    TutorialAndroidTheme {
+      Greeting("Android")
+    }
   }
 }
