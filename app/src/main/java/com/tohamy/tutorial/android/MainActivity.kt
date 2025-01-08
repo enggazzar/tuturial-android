@@ -152,7 +152,7 @@ https://www.youtube.com/watch?v=cr5xLjPC4-0&t=932s
     }
   }
  //endregion
-  //region  Calling APIs from an Activity's coroutine scope
+  //region  5-Calling APIs from an Activity's coroutine scope
   /*
   Calling APIs from an Activity's coroutine scope (e.g., using lifecycleScope or directly tied to the Activity) can lead to cancellations if the Activity is destroyed, such as during a configuration change (e.g., rotation or theme change).
    */
