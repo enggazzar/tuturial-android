@@ -21,6 +21,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
@@ -30,273 +32,136 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
 import kotlin.time.measureTime
 
-/*
-references
-https://www.youtube.com/watch?v=ShNhJ3wMpvQ&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_
- */
-/*
-In Kotlin, coroutines are a lightweight way to perform asynchronous and concurrent programming.
-==========Coroutine Scope===========
- 1-GlobalScope
- 2- CoroutineScope
- 3- viewModelScope
- viewModelScope.launch {
-            // Coroutine will cancel when ViewModel is cleared
-        }
-4. lifecycleScope
- A scope for coroutines tied to the lifecycle of a LifecycleOwner (e.g., Activity, Fragment).
-  lifecycleScope.launch {
-            // Coroutine will cancel when lifecycle is destroyed
-        }
-  5. repeatOnLifecycle
-  Runs a block of code repeatedly when the LifecycleOwner reaches a specific lifecycle state.
-  lifecycleScope.launch {
-    repeatOnLifecycle(Lifecycle.State.STARTED) {
-        // Runs only when the lifecycle is in STARTED state
-    }
-}
-6. LifecycleOwner.lifecycleScope
-Similar to lifecycleScope, but scoped specifically to a LifecycleOwner
-myFragment.lifecycleScope.launch {
-    // Coroutine scoped to Fragment lifecycle
-}
-8. SupervisorScope
-Description: A scope that ensures child coroutines are independent of each other's failure.
-Use Case: When you want sibling coroutines to continue running even if one fails.
-supervisorScope {
-    launch { task1() } // Will not affect the other coroutines
-    launch { task2() }
-}
-What distinguishes Coroutines from Threads?
-1-Executed within a thread
-2-Coroutines are suspendable
-3-They can switch their context
-==================
-sleep stop thread but delay will stop the current coroutine
-if main thread finish his work main all coroutine will be canceled
-======suspend function===========
-1- executed with another suspend function or coroutine
 
- */
 
 class MainActivity : ComponentActivity() {
 
-  suspend fun networkCall1(): String {
-    delay(3000)
-    return "call 1"
+/*
+reference
+https://www.youtube.com/watch?v=cr5xLjPC4-0&t=932s
+ */
+
+  //region 1-Sequential Execution
+  /*
+   1-Sequential Execution: The getUserFirstNames function processes each userId one by one. Since getFirstName involves a delay(1000L), the total time to fetch all names grows linearly with the number of userIds.
+    */
+
+  suspend fun getFirstName(userId: String): String {
+    delay(1000L)
+    return "first name"
+  }
+  //mistake
+  suspend fun getUserFirstNames(userIds: List<String>): List<String> {
+    val firstNames = mutableListOf<String>()
+    for (id in userIds) {
+      firstNames.add(getFirstName(id))
+    }
+    return firstNames
+  }
+  //fix Each getFirstName call runs concurrently using async
+  suspend fun getUserFirstNamesAsync(userIds: List<String>): List<String> = coroutineScope {
+    userIds.map { userId ->
+      async { getFirstName(userId) }
+    }.map { it.await() }
+  }
+  //endregion
+  //region 2-Inefficient Cancellation
+  /*
+  The job.cancel() will stop the coroutine, but the loop does not have explicit checks to handle
+ cancellation, which could lead to unexpected behavior
+   */
+  //mistake
+  suspend fun doSomething() {
+    val job = CoroutineScope(Dispatchers.Default).launch {
+      var random = Random.nextInt(until = 100_000)
+      while (random != 50_000) {
+        random = Random.nextInt(until = 100_000)
+      }
+    }
+    delay(500L)
+    job.cancel()
+  }
+  //fix The isActive check ensures the coroutine can stop execution gracefully when canceled
+  suspend fun doSomethingFix() {
+    val job = CoroutineScope(Dispatchers.Default).launch {
+      var random: Int
+      //check isActive
+      while (isActive) {
+        random = Random.nextInt(until = 100_000)
+        if (random == 50_000) break
+      }
+    }
+
+    delay(500L) // Wait for 500 ms
+    job.cancelAndJoin() // Cancel the job and wait for its completion
   }
 
-  suspend fun networkCall2(): String {
-    delay(3000)
-    return "call 2"
+  //endregion
+  //region 3- a coroutine is not main-safe, it typically means that the coroutine is executing code that might block or delay the main thread
+  /*
+  1-Dispatchers.Main is the default for suspend function so will run in main ui thread
+  2- Popular libraries like Room and Retrofit are designed to handle threading efficiently, meaning you don’t need to use withContext(Dispatchers.IO) manually for their operations. These libraries are main-safe by default
+   */
+  suspend fun doNetworkCall(): Result<String> {
+    val result = networkCall()
+    return if (result == "Success") {
+      Result.success(result)
+    } else {
+      Result.failure(Exception("Network call failed"))
+    }
   }
+ //will execute in main dispatcher
+  suspend fun networkCall(): String {
+    delay(3000L) // Simulates network latency
+    return if (Random.nextBoolean()) "Success" else "Error"
+  }
+  suspend fun networkCallFix(): String {
+    return  withContext(Dispatchers.IO){
+      delay(3000L) // Simulates network latency
+      if (Random.nextBoolean()) "Success" else "Error"
+    }
+
+  }
+  //endregion
+  //region 4-Parent-Child  CancellationException in Coroutines
+  /*
+  In a coroutine context, when a child coroutine fails with an unhandled exception, it cancels the parent coroutine.
+    However, if the exception is caught locally, the parent coroutine remains unaware of the error.
+   */
+  suspend fun riskyTask() {
+    try {
+      delay(3000L)
+      println("The answer is ${10 / 0}")
+    } catch (e: Exception) {
+      println("Oops, that didn't work")
+    }
+  }
+  //here parent coroutine will notify
+  suspend fun riskyTaskFix() {
+    try {
+      delay(3000L)
+      println("The answer is ${10 / 0}")
+    } catch (e: Exception) {
+      if(e is CancellationException){
+        throw  e
+      }
+      println("Oops, that didn't work")
+    }
+  }
+ //endregion
+  //region  Calling APIs from an Activity's coroutine scope
+  /*
+  Calling APIs from an Activity's coroutine scope (e.g., using lifecycleScope or directly tied to the Activity) can lead to cancellations if the Activity is destroyed, such as during a configuration change (e.g., rotation or theme change).
+   */
+  //endregion
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
-    //region loge will print after tow suspend function finish because executed in same coroutine
-    //  launch {  } if call every function inside launch tow function will be executed at same time
-    //https://www.youtube.com/watch?v=yc_WfBp-PdE&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=3
-    GlobalScope.launch {
 
-      val network1 = networkCall1()
-      val network2 = networkCall2()
-      Log.e("Tag", network1)
-      Log.e("Tag", network2)
-    }
-    //endregion
-    //region Coroutine Contexts (Dispatcher)
-    /*
-    https://www.youtube.com/watch?v=71NrkkRNXG4&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=4
-    Dispatchers
-    1- Dispatchers.Main will be in main thread (we can update ui only from main thread)
-    2-Dispatchers.IO data operation like (network call-db-read write files)
-    3-Dispatchers.Default long running operation
-    4-Dispatchers.Unconfined light used for simple test
-    ==============
-    switch between dispatcher
-     withContext(Dispatchers.Main){
-         //here can update ui
-       }
-       ===========
-     */
-    GlobalScope.launch(Dispatchers.IO) {
-      val network1 = networkCall1()
-      withContext(Dispatchers.Main) {
-        //here can update ui
-      }
-    }
-
-    //endregion
-    //region runBlocking
-    /*
-    https://www.youtube.com/watch?v=k9yisEEPC8g&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=5
-    1- will block main thread if have ex delay useful for test
-    2- like sleep but can call suspend function inside
-     */
-
-    runBlocking {
-      delay(100)
-    }
-    Log.e("tag", "will executed after 100")
-    //endregion
-    //region join wait canceling
-    /*
-    https://www.youtube.com/watch?v=55W60o9uzVc&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=7
-    1- join will block main thread till current coroutine is finished
-     */
-    val job = GlobalScope.launch {
-      repeat(3) {
-        Log.e("Tage", "is working")
-      }
-    }
-    runBlocking {
-      job.join()
-      Log.e("Tage", "is finished")
-    }
-
-    /*
-    2- cancel will cancel coroutine but need to use is active because sometimes coroutine will busy with
-    calculation
-     */
-
-    val job1 = GlobalScope.launch {
-      if (isActive) {
-        repeat(3) {
-          Log.e("Tage", "is working")
-        }
-      }
-
-      /*
-      3-withTimeout out will cancel coroutine automatic if working more than the time
-       */
-      GlobalScope.launch {
-        withTimeout(1000) {
-          if (isActive) {
-            repeat(3) {
-              Log.e("Tage", "is working")
-            }
-          }
-        }
-      }
-
-      //endregion
-      //region Async and Await - Kotlin Coroutines
-      /*
-      1-launch will return job where can use join to wait coroutine but async will return deferred
-      2- async will use with if there are  result( Deferred) but launch not
-      3- measureTime to calculate time till coroutine is finish
-       */
-      GlobalScope.launch {
-        var network1: String? = null
-        var network2: String? = null
-        network1 = networkCall1()
-        network2 = networkCall2()
-        //will print null
-        Log.e("Tag", network1)
-        Log.e("Tag", network2)
-      }
-      GlobalScope.launch {
-        val time = measureTime {
-          var network1: String? = null
-          var network2: String? = null
-          val job1 = launch { network1 = networkCall1() }
-          val job2 = launch { network1 = networkCall2() }
-          //will print null
-          job1.join()
-          job2.join()
-          //will wait until job1 and job 2 is finished thin print job1 and job 2 will executed in same time
-          Log.e("Tag", network1.toString())
-          Log.e("Tag", network2.toString())
-        }
-        Log.e("Tag", "time is $time")
-      }
-      //async is better way more than above
-      GlobalScope.launch {
-        val time = measureTime {
-          val network1 = async { networkCall1() }
-          val network2 = async { networkCall2() }
-
-          //will wait until network1 and network2 2 is finished thin print job1 and job 2 will executed in same time
-          Log.e("Tag", network1.await())
-          Log.e("Tag", network2.await())
-        }
-        Log.e("Tag", "time is $time")
-      }
-
-      //endregion
-      //region lifecycle
-      /*
-     https://www.youtube.com/watch?v=uiPYcSSjNTI&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=8
-     will cancel when open new activity if you make calculation you need to check if is active
-      */
-      lifecycleScope.launch {
-
-      }
-      //endregion
-      //region Coroutine Cancellation & Exception Handling
-      /*
-       https://www.youtube.com/watch?v=VWlwkqmTLHc&list=PLQkwcJG4YTCQcFEPuYGuv54nYai_lwil_&index=11
-       1- try catch not recommended with coroutine but use CoroutineExceptionHandler
-       2- Coroutine scope if there are exception all sub coroutine will cancelled even we handle exception
-       3-supervisorScope if there are exception all sub coroutine will not cancelled
-       4- can use +  lifecycleScope.launch (handler+Dispatchers.Main)
-       5-viewModelScope if there are exception all sub coroutine will cancelled even we handle exception
-       6- if cancel job there are exception handle will eat cancel and if there are print after try catch
-       will executed to stop this throw new exception
-       7-CancellationException will not make app crash
-       8- if child coroutine have exception will send to parent
-       9-  async  will not throw exception till we call wait
-
-       */
-      val handler= CoroutineExceptionHandler { coroutineContext, throwable ->
-         println("Exception is ${throwable.message}")
-      }
-      lifecycleScope.launch (handler+Dispatchers.Main){
-        launch {
-          //app will not crash
-          throw Exception("Errore")
-        }
-        launch {
-          //will not printed all sub coroutine wil be cancelled
-         println("coroutine 2")
-        }
-
-      }
-      supervisorScope {
-        launch {
-          //app will not crash
-          throw Exception("Errore")
-        }
-        launch {
-          //will  printed
-          println("coroutine 2")
-        }
-
-      }
-      //cancel job
-      lifecycleScope.launch {
-        val job = launch {
-          try {
-            delay(timeMillis = 500L)
-          } catch (e: Exception) {
-            //to stop println  because e: Exception eat CancellationException
-            if (e is CancellationException) {
-              throw e
-            }
-            e.printStackTrace()
-          }
-          //will not print
-          println("Coroutine 1 finished")
-        }
-        delay(timeMillis = 300L)
-        job.cancel()
-      }
-
-
-      //endregion
 
 
       setContent {
@@ -305,7 +170,7 @@ class MainActivity : ComponentActivity() {
           MyApp()
           // }
         }
-      }
+
     }
   }
 
