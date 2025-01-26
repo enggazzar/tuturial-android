@@ -48,6 +48,11 @@ Dependency Injection focuses on:
    */
   //from di
   /*
+  /*
+  provide function
+  1- A provider function (annotated with @Provides or @Binds) is a way to tell Hilt how to create or provide a particular type of dependency.
+  2- Instead of calling a provider function directly, you can pass its dependency into the constructor of a class. Hilt will resolve and inject the necessary objects automatically.
+   */
   @InstallIn(SingletonComponent::class)
 object AppModule {
     @Provides
@@ -57,6 +62,11 @@ object AppModule {
             .baseUrl("https://test.com")
             .build()
             .create(MyApi::class.java)
+    }
+    @Provides
+    @Singleton
+    fun provideMyRepository(api:MyApi): MyRepository {
+        return MyRepositoryImpl(api)
     }
 }
 1-@InstallIn  It determines the scope
@@ -68,6 +78,35 @@ object AppModule {
 2-@Provides when you need to define how a dependency should be instantiated (e.g., setting up Retrofit, database, or other configurations
 3- @Singleton  Ensures that the MyApi instance is created only once and reused across the app(if I have multi
  imp will provide one instance)
+ //==========
+1-The @HiltAndroidApp annotation is applied to your custom Application class in an Android app
+ 2- if have tow provider function return same data type we can use @Named example:
+  @Provides
+    @Singleton
+    fun provideMyApi( @Named("firstName"):name:String): MyApi {
+
+    }
+  @Provides
+    @Named("firstName")
+    fun provideFirstName(): String {
+        return "John"
+    }
+
+    @Provides
+    @Named("lastName")
+    fun provideLastName(): String {
+        return "Doe"
+    }
+3- When Field Injection is Used (When the class is managed by Android (e.g., Activity, Fragment, or Service), and you don't control the constructor.)
+ @Inject lateinit var myRepository: MyRepository
+ 4- When you inject a dependency using @Inject without Lazy, the dependency is initialized immediately when the parent object (e.g., Activity, Fragment, or ViewModel) is created
+  5-With Lazy Injection
+When you use Lazy (from Dagger), the dependency is not initialized immediately. It will only be initialized the first time you call myDependency.get().
+
+
+
+
+
    */
 
   override fun onCreate(savedInstanceState: Bundle?) {
